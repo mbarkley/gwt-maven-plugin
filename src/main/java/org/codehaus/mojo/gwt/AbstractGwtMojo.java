@@ -31,9 +31,12 @@ import org.apache.maven.artifact.resolver.ArtifactNotFoundException;
 import org.apache.maven.artifact.resolver.ArtifactResolutionException;
 import org.apache.maven.artifact.resolver.ArtifactResolutionResult;
 import org.apache.maven.artifact.resolver.ArtifactResolver;
+import org.apache.maven.artifact.resolver.filter.ArtifactFilter;
 import org.apache.maven.artifact.versioning.ArtifactVersion;
 import org.apache.maven.artifact.versioning.DefaultArtifactVersion;
 import org.apache.maven.model.Dependency;
+import org.apache.maven.model.Exclusion;
+import org.apache.maven.model.Plugin;
 import org.apache.maven.model.Resource;
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
@@ -69,6 +72,10 @@ import java.util.Set;
 public abstract class AbstractGwtMojo
     extends AbstractMojo
 {
+    private static final String GWT_PLUGIN_ARTIFACT_ID = "gwt-maven-plugin";
+
+    private static final String GWT_PLUGIN_GROUP_ID = "org.codehaus.mojo";
+
     private static final String GWT_USER = "com.google.gwt:gwt-user";
 
     private static final String GWT_DEV = "com.google.gwt:gwt-dev";
@@ -268,14 +275,36 @@ public abstract class AbstractGwtMojo
             MavenProject rootProject =
                             this.projectBuilder.buildFromRepository( rootArtifact, this.remoteRepositories,
                                                                      this.localRepository );
-            List<Dependency> dependencies = rootProject.getDependencies();
-            Set<Artifact> dependencyArtifacts =
+            final List<Exclusion> exclusions = getProjectPluginExclusions( rootArtifact );
+            final List<Dependency> dependencies = rootProject.getDependencies();
+            final Set<Artifact> dependencyArtifacts =
                             MavenMetadataSource.createArtifacts( artifactFactory, dependencies, null, null, null );
             dependencyArtifacts.add( rootProject.getArtifact() );
-            result = resolver.resolveTransitively( dependencyArtifacts, rootArtifact,
-                                                   Collections.EMPTY_MAP, localRepository,
-                                                   remoteRepositories, artifactMetadataSource,
-                                                   null, Collections.EMPTY_LIST);
+            result = resolver.resolveTransitively( dependencyArtifacts,
+                                                   rootArtifact,
+                                                   Collections.EMPTY_MAP,
+                                                   localRepository,
+                                                   remoteRepositories,
+                                                   artifactMetadataSource,
+                                                   new ArtifactFilter()
+                                                   {
+
+                                                    @Override
+                                                    public boolean include( final Artifact artifact )
+                                                    {
+                                                      for (final Exclusion exclusion : exclusions)
+                                                      {
+                                                        if ( artifact.getArtifactId().equals( exclusion.getArtifactId() )
+                                                                && artifact.getGroupId().equals( exclusion.getGroupId() ) )
+                                                        {
+                                                          return false;
+                                                        }
+                                                      }
+
+                                                      return true;
+                                                    }
+                                                  },
+                                                   Collections.EMPTY_LIST);
         }
         catch (Exception e)
         {
@@ -291,6 +320,19 @@ public abstract class AbstractGwtMojo
         }
 
         return files;
+    }
+
+    private List<Exclusion> getProjectPluginExclusions( final Artifact pluginDependency ) {
+      final Plugin plugin = project.getPlugin(Plugin.constructKey(GWT_PLUGIN_GROUP_ID, GWT_PLUGIN_ARTIFACT_ID));
+      for ( final Dependency dep : plugin.getDependencies() )
+      {
+        if ( dep.getGroupId().equals( pluginDependency.getGroupId() ) && dep.getArtifactId().equals( pluginDependency.getArtifactId() ) )
+        {
+          return dep.getExclusions();
+        }
+      }
+
+      return Collections.emptyList();
     }
 
     /**
